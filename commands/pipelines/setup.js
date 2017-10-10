@@ -7,6 +7,7 @@ const prompt = require('../../lib/prompt')
 const {flags} = require('cli-engine-heroku')
 
 const REPO_REGEX = /.+\/.+/
+const DEVELOPMENT_APP_INDICATOR = '-dev'
 const STAGING_APP_INDICATOR = '-staging'
 const PIPELINE_MIN_LENGTH = 2
 const PIPELINE_MAX_LENGTH = 30 - STAGING_APP_INDICATOR.length
@@ -161,7 +162,7 @@ function* getCISettings (yes, organization) {
   return settings
 }
 
-function createApps (heroku, archiveURL, pipeline, pipelineName, stagingAppName, organization, region, stagingOverrides, prodOverrides) {
+function createApps (heroku, archiveURL, pipeline, pipelineName, develAppName, stagingAppName, organization, region, enableDevelopmentApp, develOverrides, stagingOverrides, prodOverrides) {
   const prodAppSetupPromise = createApp(heroku, {
     archiveURL,
     pipeline,
@@ -183,6 +184,18 @@ function createApps (heroku, archiveURL, pipeline, pipelineName, stagingAppName,
   })
 
   const promises = [prodAppSetupPromise, stagingAppSetupPromise]
+
+  if (enableDevelopmentApp) {
+    promises.push(createApp(heroku, {
+      archiveURL,
+      pipeline,
+      name: develAppName,
+      stage: 'development',
+      organization,
+      region,
+      overrides: develOverrides
+    }))
+  }
 
   return Promise.all(promises).then(appSetups => {
     return appSetups
@@ -278,6 +291,16 @@ module.exports = {
       hasValue: true
     },
     {
+      name: 'development',
+      description: 'Enable creation of a development app in addition to the staging and production apps',
+      hasValue: false
+    },
+    {
+      name: 'develOverrides',
+      description: 'JSON with DEVELOPMENT overrides for app creation. For example: {"env": { "RAILS_ENV":"development" } }',
+      hasValue: true
+    },
+    {
       name: 'stagingOverrides',
       description: 'JSON with STAGING overrides for app creation. For example: {"env": { "RAILS_ENV":"development" } }',
       hasValue: true
@@ -301,9 +324,12 @@ module.exports = {
 
     const organization = context.org || context.team || context.flags.team || context.flags.organization
     const {name: pipelineName, repo: repoName} = yield getNameAndRepo(context.args)
+    const develOverrides = context.flags.develOverrides && JSON.parse(context.flags.develOverrides)
     const stagingOverrides = context.flags.stagingOverrides && JSON.parse(context.flags.stagingOverrides)
     const prodOverrides = context.flags.prodOverrides && JSON.parse(context.flags.prodOverrides)
     const region = context.flags.region
+    const enableDevelopmentApp = context.flags.development
+    const develAppName = pipelineName + DEVELOPMENT_APP_INDICATOR
     const stagingAppName = pipelineName + STAGING_APP_INDICATOR
     const repo = yield getRepo(github, repoName)
     const settings = yield getSettings(context.flags.yes, repo.default_branch)
@@ -332,7 +358,7 @@ module.exports = {
     )
 
     const archiveURL = yield github.getArchiveURL(repoName, repo.default_branch)
-    const appSetups = yield createApps(heroku, archiveURL, pipeline, pipelineName, stagingAppName, organization, region, stagingOverrides, prodOverrides)
+    const appSetups = yield createApps(heroku, archiveURL, pipeline, pipelineName, develAppName, stagingAppName, organization, region, enableDevelopmentApp, develOverrides, stagingOverrides, prodOverrides)
 
     yield cli.action(
       `Creating production and staging apps (${cli.color.app(pipelineName)} and ${cli.color.app(stagingAppName)})`,
