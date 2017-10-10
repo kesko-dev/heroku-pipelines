@@ -59,10 +59,11 @@ function getRepo (github, name) {
   })
 }
 
-function createApp (heroku, {archiveURL, name, organization, pipeline, stage}) {
+function createApp (heroku, {archiveURL, name, organization, pipeline, stage, overrides}) {
   const params = {
     source_blob: {url: archiveURL},
     app: {name},
+    overrides,
     pipeline_coupling: {
       stage,
       pipeline: pipeline.id
@@ -160,13 +161,14 @@ function* getCISettings (yes, organization) {
   return settings
 }
 
-function createApps (heroku, archiveURL, pipeline, pipelineName, stagingAppName, organization) {
+function createApps (heroku, archiveURL, pipeline, pipelineName, stagingAppName, organization, stagingOverrides, prodOverrides) {
   const prodAppSetupPromise = createApp(heroku, {
     archiveURL,
     pipeline,
     name: pipelineName,
     stage: 'production',
-    organization
+    organization,
+    overrides: prodOverrides
   })
 
   const stagingAppSetupPromise = createApp(heroku, {
@@ -174,7 +176,8 @@ function createApps (heroku, archiveURL, pipeline, pipelineName, stagingAppName,
     pipeline,
     name: stagingAppName,
     stage: 'staging',
-    organization
+    organization,
+    overrides: stagingOverrides
   })
 
   const promises = [prodAppSetupPromise, stagingAppSetupPromise]
@@ -266,6 +269,16 @@ module.exports = {
       char: 'y',
       description: 'accept all default settings without prompting',
       hasValue: false
+    },
+    {
+      name: 'stagingOverrides',
+      description: 'JSON with STAGING overrides for app creation. For example: {"env": { "RAILS_ENV":"development" } }',
+      hasValue: true
+    },
+    {
+      name: 'prodOverrides',
+      description: 'JSON with PRODUCTION overrides for app creation. For example: {"env": { "RAILS_ENV":"development" } }',
+      hasValue: true
     }
   ],
   run: cli.command(co.wrap(function* (context, heroku) {
@@ -281,6 +294,8 @@ module.exports = {
 
     const organization = context.org || context.team || context.flags.team || context.flags.organization
     const {name: pipelineName, repo: repoName} = yield getNameAndRepo(context.args)
+    const stagingOverrides = context.flags.stagingOverrides && JSON.parse(context.flags.stagingOverrides)
+    const prodOverrides = context.flags.prodOverrides && JSON.parse(context.flags.prodOverrides)
     const stagingAppName = pipelineName + STAGING_APP_INDICATOR
     const repo = yield getRepo(github, repoName)
     const settings = yield getSettings(context.flags.yes, repo.default_branch)
@@ -309,7 +324,7 @@ module.exports = {
     )
 
     const archiveURL = yield github.getArchiveURL(repoName, repo.default_branch)
-    const appSetups = yield createApps(heroku, archiveURL, pipeline, pipelineName, stagingAppName, organization)
+    const appSetups = yield createApps(heroku, archiveURL, pipeline, pipelineName, stagingAppName, organization, stagingOverrides, prodOverrides)
 
     yield cli.action(
       `Creating production and staging apps (${cli.color.app(pipelineName)} and ${cli.color.app(stagingAppName)})`,
